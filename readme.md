@@ -4,12 +4,21 @@ A simple chatbot that interfaces with [Datamule's](https://datamule.xyz/) APIs. 
 
 ## Run
 
+Set up environment
 ```bash
 export DATAMULE_API_KEY="your-datamule-key"
 export OPENROUTER_API_KEY="your-openrouter-key"
 ```
+Install
+```python
+pip install mulebot
+```
+```typescript
+npm install mulebot
+```
 
 
+Deploy
 ```python
 python -m mulebot serve
 ```

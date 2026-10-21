@@ -1,0 +1,118 @@
+name: Publish packages
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    name: Build packages
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+
+      - uses: actions/setup-python@v6
+        with:
+          python-version: '3.11'
+
+      - uses: actions/setup-node@v6
+        with:
+          node-version: '24'
+          package-manager-cache: false
+
+      - name: Check hardcoded versions match the tag
+        shell: python
+        env:
+          RELEASE_TAG: ${{ github.ref_name }}
+        run: |
+          import ast
+          import json
+          import os
+          import re
+          from pathlib import Path
+
+          tag = os.environ["RELEASE_TAG"]
+          if not re.fullmatch(r"v\d+\.\d+\.\d+", tag):
+              raise SystemExit("Expected a stable version tag such as v0.1.0")
+          version = tag[1:]
+          tree = ast.parse(Path("python/setup.py").read_text(encoding="utf-8"))
+          setup = next(node for node in ast.walk(tree) if isinstance(node, ast.Call)
+                       and isinstance(node.func, ast.Name) and node.func.id == "setup")
+          python_version = ast.literal_eval(next(item.value for item in setup.keywords if item.arg == "version"))
+          package = json.loads(Path("typescript/package.json").read_text(encoding="utf-8"))
+          lock = json.loads(Path("typescript/package-lock.json").read_text(encoding="utf-8"))
+          versions = [python_version, package["version"], lock["version"], lock["packages"][""]["version"]]
+          if any(value != version for value in versions):
+              raise SystemExit(f"Tag {tag} does not match the hardcoded package versions: {versions}")
+          print(f"Publishing both packages as {version}")
+
+      - name: Build and validate Python distributions
+        run: |
+          python -m pip install --upgrade build twine
+          python -m build python --outdir release/python
+          python -m twine check release/python/*
+
+      - name: Install TypeScript dependencies
+        working-directory: typescript
+        run: npm ci
+
+      - name: Build npm package
+        run: |
+          mkdir -p release/npm
+          cd typescript
+          npm pack --pack-destination ../release/npm
+
+      - uses: actions/upload-artifact@v6
+        with:
+          name: packages
+          path: release/
+          if-no-files-found: error
+
+  publish-pypi:
+    name: Publish Python to PyPI
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - uses: actions/download-artifact@v6
+        with:
+          name: packages
+          path: release
+
+      - name: Upload to PyPI
+        uses: pypa/gh-action-pypi-publish@release/v1
+        with:
+          packages-dir: release/python/
+
+  publish-npm:
+    name: Publish TypeScript to npm
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - uses: actions/checkout@v6
+
+      - uses: actions/setup-node@v6
+        with:
+          node-version: '24'
+          registry-url: 'https://registry.npmjs.org'
+          package-manager-cache: false
+
+      - name: Install npm with trusted publishing support
+        run: npm install --global npm@11
+
+      - uses: actions/download-artifact@v6
+        with:
+          name: packages
+          path: release
+
+      - name: Upload to npm
+        run: npm publish release/npm/*.tgz --access public --tag latest
