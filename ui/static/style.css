@@ -1,0 +1,66 @@
+:root { color-scheme: light; font: 15px/1.6 system-ui, sans-serif; color: #1d2935; background: #f8f9fb; }
+* { box-sizing: border-box; }
+[hidden] { display: none !important; }
+body { margin: 0; }
+header { display: flex; align-items: center; justify-content: space-between; padding: 18px 30px; background: white; border-bottom: 1px solid #e0e5e9; }
+header > div { display: flex; align-items: baseline; gap: 15px; }
+h1 { margin: 0; font-size: 23px; letter-spacing: -.6px; }
+.settings { display: flex; align-items: center; gap: 16px; padding: 12px 30px; border-bottom: 1px solid #e0e5e9; background: white; flex-wrap: wrap; font-size: 13px; }
+.settings label { display: flex; align-items: center; gap: 10px; }
+.settings input, .settings select { font: inherit; width: min(360px, 65vw); border: 1px solid #c7d0d8; border-radius: 6px; padding: 7px 10px; background: white; }
+.custom-model:not([hidden]) { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+#settings-status { color: #687683; }
+header span, .hint { color: #687683; }
+h2 { margin: 0 0 18px; font-size: 17px; }
+h3 { font-size: 16px; margin: 0 0 12px; }
+main { display: grid; grid-template-columns: minmax(0, 1fr); max-width: 840px; margin: auto; }
+main.artifact-open { grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); max-width: 1600px; }
+.conversation { min-width: 0; padding: 26px 30px; }
+#messages { min-height: 45vh; }
+.message { background: white; border: 1px solid #e0e5e9; border-radius: 10px; margin-bottom: 16px; padding: 18px; overflow-wrap: anywhere; }
+.message.user { background: #edf3f8; border-color: #dbe5ee; }
+.message > strong { display: block; font-size: 12px; color: #687683; margin-bottom: 8px; text-transform: uppercase; letter-spacing: .6px; }
+.message p { margin: 8px 0; }
+.error { color: #a32626; }
+textarea { resize: vertical; width: 100%; font: inherit; padding: 14px; border: 1px solid #c7d0d8; border-radius: 8px; min-height: 90px; background: white; }
+textarea:focus { outline: 2px solid #afcde4; border-color: #376583; }
+.actions { display: flex; align-items: center; justify-content: space-between; margin-top: 8px; gap: 16px; }
+#status { font-size: 13px; color: #687683; }
+button { font: inherit; font-size: 13px; cursor: pointer; border: 1px solid #bdc9d4; border-radius: 6px; padding: 7px 16px; color: #263c50; background: white; }
+#send { background: #263c50; color: white; border-color: #263c50; }
+button:disabled { opacity: .55; cursor: wait; }
+#artifact-panel { position: sticky; top: 16px; align-self: start; min-width: 0; max-height: calc(100dvh - 32px); overflow-y: auto; padding: 26px; border-left: 1px solid #e0e5e9; }
+.artifact-toolbar { display: flex; align-items: center; justify-content: space-between; gap: 16px; margin-bottom: 18px; }
+.artifact-toolbar h2 { margin: 0; overflow-wrap: anywhere; }
+.artifact-link { display: flex; flex-direction: column; gap: 4px; width: 100%; text-align: left; padding: 16px 18px; margin-bottom: 16px; }
+.artifact-link strong { font-size: 15px; }
+.artifact-link span { color: #687683; font-size: 12px; }
+.artifact-link[aria-expanded="true"] { background: #edf3f8; border-color: #376583; }
+.artifact-link:focus-visible { outline: 2px solid #376583; outline-offset: 2px; }
+.artifact { padding: 18px; background: white; border: 1px solid #e0e5e9; border-radius: 10px; margin-bottom: 20px; }
+.artifact svg { width: 100%; height: auto; display: block; }
+.legend { display: flex; flex-wrap: wrap; gap: 12px; font-size: 12px; margin: 10px 0; }
+.legend span { display: flex; align-items: center; gap: 5px; }
+.legend svg { width: 10px; height: 10px; }
+details { background: white; border: 1px solid #e0e5e9; border-radius: 7px; padding: 12px; margin-bottom: 14px; min-width: 0; }
+summary { cursor: pointer; font-size: 13px; overflow-wrap: anywhere; }
+.tool { margin: 0 0 12px; background: transparent; }
+.tools > .tool-list { margin-top: 12px; }
+.tools > summary { color: #687683; }
+.tool-history-actions { float: right; display: inline-flex; align-items: center; gap: 6px; margin-left: 10px; }
+.tool-history-button { padding: 3px; border: 0; color: #687683; background: transparent; }
+.tool-history-button:hover { color: #263c50; background: #edf3f8; }
+.tool-history-button svg { display: block; width: 16px; height: 16px; }
+.tool-history-status { font-size: 12px; }
+.tools .tool:last-child { margin-bottom: 0; }
+.reasoning { margin-top: 12px; }
+.reasoning pre { white-space: pre-wrap; overflow-wrap: anywhere; }
+pre { overflow: auto; padding: 12px; background: #f0f3f6; border-radius: 5px; font-size: 12px; }
+code { font-family: ui-monospace, monospace; font-size: .9em; }
+.table-wrap { overflow-x: auto; }
+table { border-collapse: collapse; font-size: 12px; width: 100%; }
+th, td { text-align: left; padding: 6px 9px; border-bottom: 1px solid #e0e5e9; white-space: nowrap; }
+a { color: #315d7e; }
+.artifact-actions { display: flex; align-items: center; gap: 6px; margin-top: 10px; }
+.sr-only { position: absolute; width: 1px; height: 1px; padding: 0; overflow: hidden; clip-path: inset(50%); }
+@media (max-width: 850px) { main.artifact-open { grid-template-columns: minmax(0, 1fr); } #artifact-panel { position: fixed; inset: 0; height: 100dvh; z-index: 2; max-height: none; background: #f8f9fb; border: 0; padding: 20px; } header { padding: 16px 20px; } header span { display: none; } .conversation { padding: 20px; } }

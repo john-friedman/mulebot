@@ -1,0 +1,49 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>$title</title>
+  <link rel="stylesheet" href="/static/style.css">
+  <script src="/static/app.js" defer></script>
+</head>
+<body>
+  <header><div><h1>$title</h1><span>Datamule API chat</span></div><button id="reset" type="button">New chat</button></header>
+  <div class="settings">
+    <label for="model">Model
+      <select id="model" disabled>
+        <optgroup label="Quick choices">
+          <option value="deepseek/deepseek-v4.1-flash-1017:nitro">DeepSeek V4.1 Flash 1017 (Nitro)</option>
+          <option value="google/gemini-3.5-flash-lite">Gemini 3.5 Flash Lite</option>
+          <option value="z-ai/glm-5.3-flash">GLM 5.3 Flash</option>
+          <option value="openai/gpt-6-luna">GPT-6 Luna</option>
+        </optgroup>
+        <option value="__custom__">Add your own model…</option>
+      </select>
+    </label>
+    <form id="custom-model-form" class="custom-model" hidden>
+      <label for="custom-model">OpenRouter model ID <input id="custom-model" placeholder="provider/model" maxlength="200" required></label>
+      <button id="use-custom-model" type="submit">Use model</button>
+      <button id="cancel-custom-model" type="button">Cancel</button>
+    </form>
+    <span id="settings-status" role="status"></span>
+  </div>
+  <main>
+    <section class="conversation" aria-label="Conversation">
+      <div id="messages" aria-live="polite"><p class="hint" id="welcome">Ask a question about Datamule's data.</p></div>
+      <form id="chat-form">
+        <label class="sr-only" for="prompt">Message</label>
+        <textarea id="prompt" rows="3" maxlength="16000" placeholder="Show me AMZN revenue over time" required>Show me AMZN revenue over time</textarea>
+        <div class="actions"><span id="status" role="status">Ready</span><button id="send" type="submit">Send</button></div>
+      </form>
+    </section>
+    <aside id="artifact-panel" aria-labelledby="artifact-title" hidden>
+      <div class="artifact-toolbar">
+        <h2 id="artifact-title">Artifact</h2>
+        <button id="close-artifact" type="button" aria-label="Close artifact">Close</button>
+      </div>
+      <div id="artifacts"></div>
+    </aside>
+  </main>
+</body>
+</html>

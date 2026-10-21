@@ -1,0 +1,50 @@
+{
+  "name": "mulebot",
+  "version": "0.1.0",
+  "description": "TypeScript chatbot for Datamule APIs",
+  "author": "John Friedman",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/john-friedman/mulebot.git",
+    "directory": "typescript"
+  },
+  "type": "module",
+  "sideEffects": false,
+  "license": "MIT",
+  "files": [
+    "dist"
+  ],
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    },
+    "./server": {
+      "types": "./dist/server.d.ts",
+      "import": "./dist/server.js"
+    },
+    "./docs/*": "./dist/docs/*",
+    "./ui/*": "./dist/ui/*"
+  },
+  "scripts": {
+    "build": "node scripts/build.js",
+    "typecheck": "tsc --noEmit --emitDeclarationOnly false",
+    "serve": "npm run build && node dist/cli.js serve",
+    "chat": "npm run build && node dist/cli.js chat",
+    "prepack": "npm run build"
+  },
+  "devDependencies": {
+    "@types/node": "^26.6.5",
+    "@types/sql.js": "^1.4.11",
+    "esbuild": "^0.28.2",
+    "typescript": "^7.0.2",
+    "dt-sql-parser": "^4.5.1",
+    "sql.js": "^1.15.1"
+  },
+  "engines": {
+    "node": ">=22.18"
+  },
+  "bin": {
+    "mulebot": "./dist/cli.js"
+  }
+}
