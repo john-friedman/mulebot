@@ -19,6 +19,19 @@ export class Tools {
     this.allowedTables = options.allowedTables == null ? null : new Set(options.allowedTables.map(name => name.toLowerCase()));
   }
 
+  private savedResultsHelp(): string {
+    const saved = Object.entries(this.results).slice(-5).map(([id, result]) =>
+      `${id} (${result.rows.length} rows; columns: ${result.columns.join(', ')})`);
+    return saved.length ? `Recent saved results: ${saved.join('; ')}.` : 'No results are saved yet. Fetch data with query first.';
+  }
+
+  private savedResult(result_id: string): QueryResult {
+    if (typeof result_id !== 'string' || !result_id.trim() || !Object.hasOwn(this.results, result_id)) {
+      throw new Error(`Choose an existing saved result_id. ${this.savedResultsHelp()}`);
+    }
+    return this.results[result_id];
+  }
+
   private async request(url: string, payload?: unknown): Promise<any> {
     const headers: Record<string, string> = {'User-Agent': 'mulebot/0.1'};
     if (payload !== undefined) { headers.Authorization = `Bearer ${this.apiKey}`; headers['Content-Type'] = 'application/json'; }
@@ -36,8 +49,7 @@ export class Tools {
 
   async query({sql, result_id = ''}: {sql: string; result_id?: string}) {
     if (result_id) {
-      if (!Object.hasOwn(this.results, result_id)) throw new Error('Unknown saved result_id.');
-      const {columns, rows} = await localRows(this.results[result_id], sql);
+      const {columns, rows} = await localRows(this.savedResult(result_id), sql);
       const source_result_id = result_id;
       result_id = `view_${Object.keys(this.results).length + 1}`;
       this.results[result_id] = {sql, columns, rows, source_result_id, metadata: {}};
@@ -63,6 +75,10 @@ export class Tools {
 
   writeMarkdown({title, markdown}: {title: string; markdown: string}) {
     if (typeof title !== 'string' || typeof markdown !== 'string') throw new Error('Title and Markdown must be strings.');
+    const prose = markdown.replace(/^```[^\n]*\n[\s\S]*?^```[^\n]*$/gm, '');
+    if (/<svg\b/i.test(prose)) {
+      throw new Error('Markdown artifacts cannot render SVG charts. Use plot with a saved result_id; correct any failed plot call using its error message.');
+    }
     this.artifacts.push({kind: 'markdown', title, markdown});
     return {artifact_id: this.artifacts.length, title};
   }
@@ -73,9 +89,9 @@ export class Tools {
   }) {
     if (typeof title !== 'string') throw new Error('Title must be a string.');
     if (!['line', 'bar', 'scatter'].includes(kind)) throw new Error('Choose line, bar, or scatter.');
-    if (!Object.hasOwn(this.results, result_id) || !this.results[result_id].rows.length) throw new Error('Choose a non-empty query result.');
+    const result = this.savedResult(result_id);
+    if (!result.rows.length) throw new Error(`Saved result ${result_id} is empty. Choose a non-empty result. ${this.savedResultsHelp()}`);
     if (group === x) group = '';
-    const result = this.results[result_id];
     const {columns, rows} = sql ? await localRows(result, sql) : result;
     if (!rows.length) throw new Error('The local chart selection returned no rows. Adjust the selection using the saved data.');
     const series = typeof y === 'string' ? [y] : y;
@@ -83,7 +99,7 @@ export class Tools {
     const seen = new Map<string, number>();
     let numeric = false;
     for (const row of rows) {
-      for (const column of [x, ...series, ...(group ? [group] : [])]) if (!Object.hasOwn(row, column)) throw new Error(`Unknown column: ${column}`);
+      for (const column of [x, ...series, ...(group ? [group] : [])]) if (!Object.hasOwn(row, column)) throw new Error(`Unknown chart column: ${column}. Available columns: ${columns.join(', ')}.`);
       for (const column of series) {
         if (row[column] === null || row[x] === null) continue;
         if (kind === 'scatter' && !Number.isFinite(Number(row[x]))) throw new Error('Scatter charts require finite numeric x values.');
@@ -110,7 +126,18 @@ export class Tools {
     if (!tool) throw new Error(`Unknown tool: ${name}`);
     if (!isObject(arguments_)) throw new Error('Tool arguments must be an object.');
     const properties = tool.parameters.properties as Record<string, unknown>;
-    if (Object.keys(arguments_).some(key => !Object.hasOwn(properties, key)) || tool.parameters.required.some(key => !Object.hasOwn(arguments_, key))) throw new Error('Invalid tool arguments.');
+    const missing = tool.parameters.required.filter(key => !Object.hasOwn(arguments_, key));
+    if (missing.length) {
+      const hint = name === 'plot' ? ` Every plot requires a saved result_id. Optional sql is SQLite SELECT FROM data, not a new Athena query. ${this.savedResultsHelp()}` : '';
+      throw new Error(`${name} is missing required field(s): ${missing.join(', ')}.${hint}`);
+    }
+    const unexpected = Object.keys(arguments_).filter(key => !Object.hasOwn(properties, key));
+    if (unexpected.length) throw new Error(`${name} has unknown field(s): ${unexpected.join(', ')}. Allowed fields: ${Object.keys(properties).join(', ')}.`);
+    for (const [key, value] of Object.entries(arguments_)) {
+      if ((properties[key] as {type?: string}).type === 'string' && typeof value !== 'string') {
+        throw new Error(`${name}.${key} must be a string.`);
+      }
+    }
     switch (name) {
       case 'query': return this.query(arguments_ as Parameters<Tools['query']>[0]);
       case 'plot': return this.plot(arguments_ as Parameters<Tools['plot']>[0]);

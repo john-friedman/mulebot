@@ -1,5 +1,6 @@
 import json
 import math
+import re
 import sqlite3
 import urllib.error
 import urllib.request
@@ -99,18 +100,15 @@ TOOL_DEFINITIONS = [
              "sql": {"type": "string", "description": "Athena SQL for a new Datamule query, SQLite SQL for saved results. SQLite durations use julianday(end) - julianday(start), not CAST AS DATE or year subtraction."},
              "result_id": {"type": "string", "description": "Optional saved result to query locally using SQLite; omit only when fetching new data from Datamule."},
          }, ["sql"]),
-    tool("write_markdown", "Create a Markdown artifact for the caller to display or save.",
+    tool("write_markdown", "Create a text Markdown report for the caller to display or save. HTML and SVG are displayed as text, not rendered. Use plot for charts; fix a failed plot call instead of embedding SVG in Markdown.",
          {"title": STRING, "markdown": STRING}, ["title", "markdown"]),
-    tool("plot", "Chart the final analysis rows used in your answer without querying Datamule again. y is a numeric column "
-         "or a list of numeric columns for multiple lines; group is a categorical column, not another y. "
-         "Optional sql filters or reshapes the saved rows using a read-only SQLite SELECT FROM data "
-         "(SQLite dates use julianday; arrays/objects are JSON). Use this to reuse data on follow-ups. "
-         "Line charts sort x ascending. Supply human-readable axis labels including units.", {
-             "title": STRING, "result_id": STRING,
+    tool("plot", "Create one chart artifact from a required saved result_id returned by query. This tool never fetches new data. For separate charts, call plot separately with the same result_id and different local sql filters. Chart the final analysis rows used in your answer without querying Datamule again. y is a numeric column or a list of numeric columns for multiple lines; group is a categorical column, not another y. Optional sql filters or reshapes the saved rows using a read-only SQLite SELECT FROM data (SQLite dates use julianday; arrays/objects are JSON). Use this to reuse data on follow-ups. Line charts sort x ascending. Supply human-readable axis labels including units.", {
+             "title": STRING, "result_id": {"type": "string", "description": "Required ID of a saved query result, such as query_5. Use its column names for x, y, and group. Fetch missing data with query first; never put a fresh Athena query into plot.sql."},
              "kind": {"type": "string", "enum": ["line", "bar", "scatter"]},
              "x": STRING, "y": {"anyOf": [STRING, {"type": "array", "items": STRING, "minItems": 1}]},
              "group": {"type": "string", "description": "Optional categorical series column. Omit for one series; do not repeat x or y."},
-             "sql": STRING, "x_label": STRING, "y_label": STRING,
+             "sql": {"type": "string", "description": "Optional read-only SQLite SELECT FROM data over result_id, for example SELECT * FROM data WHERE company = 'Oracle'. Omit to chart all saved rows. Athena tables, TRY_CAST, and CARDINALITY are not available here."},
+             "x_label": STRING, "y_label": STRING,
          }, ["title", "result_id", "kind", "x", "y"]),
 ]
 
@@ -122,6 +120,17 @@ class Tools:
         self.catalog = None
         self.results = {}
         self.artifacts = []
+
+    def _saved_results_help(self):
+        saved = [f"{result_id} ({len(result['rows'])} rows; columns: {', '.join(result['columns'])})"
+                 for result_id, result in list(self.results.items())[-5:]]
+        return ("Recent saved results: " + "; ".join(saved) + "." if saved else
+                "No results are saved yet. Fetch data with query first.")
+
+    def _saved_result(self, result_id):
+        if not isinstance(result_id, str) or not result_id.strip() or result_id not in self.results:
+            raise ValueError(f"Choose an existing saved result_id. {self._saved_results_help()}")
+        return self.results[result_id]
 
     def _catalog(self):
         if self.catalog is None:
@@ -156,9 +165,7 @@ class Tools:
 
     def query(self, sql, result_id=""):
         if result_id:
-            result = self.results.get(result_id)
-            if result is None:
-                raise ValueError("Unknown saved result_id.")
+            result = self._saved_result(result_id)
             columns, rows = self._local_rows(result, sql)
             source_result_id = result_id
             result_id = f"view_{len(self.results) + 1}"
@@ -185,6 +192,10 @@ class Tools:
     def write_markdown(self, title, markdown):
         if not isinstance(title, str) or not isinstance(markdown, str):
             raise ValueError("Title and Markdown must be strings.")
+        prose = re.sub(r"^```[^\n]*\n[\s\S]*?^```[^\n]*$", "", markdown, flags=re.MULTILINE)
+        if re.search(r"<svg\b", prose, flags=re.IGNORECASE):
+            raise ValueError("Markdown artifacts cannot render SVG charts. Use plot with a saved result_id; "
+                             "correct any failed plot call using its error message.")
         self.artifacts.append({"kind": "markdown", "title": title, "markdown": markdown})
         return {"artifact_id": len(self.artifacts), "title": title}
 
@@ -219,6 +230,15 @@ class Tools:
         return types
 
     def _local_rows(self, result, sql):
+        try:
+            return self._select_rows(result, sql)
+        except (ValueError, sqlite3.Error, sqlglot.errors.SqlglotError) as exc:
+            columns = ", ".join(result["columns"])
+            raise ValueError(f"Local SQLite query failed: {exc} Only the saved table data is available "
+                             f"(columns: {columns}). Use SQLite syntax; Athena tables, TRY_CAST, and "
+                             "CARDINALITY are not available here.") from exc
+
+    def _select_rows(self, result, sql):
         statements = sqlglot.parse(sql, read="sqlite")
         if len(statements) != 1 or not isinstance(statements[0], (exp.Select, exp.SetOperation)):
             raise ValueError("Local SQL must be one read-only SQLite SELECT FROM data.")
@@ -270,9 +290,10 @@ class Tools:
             raise ValueError("Choose line, bar, or scatter.")
         if group == x:
             group = ""
-        result = self.results.get(result_id)
-        if result is None or not result["rows"]:
-            raise ValueError("Choose a non-empty query result.")
+        result = self._saved_result(result_id)
+        if not result["rows"]:
+            raise ValueError(f"Saved result {result_id} is empty. Choose a non-empty result. "
+                             f"{self._saved_results_help()}")
         columns, rows = self._local_rows(result, sql) if sql else (result.get("columns") or list(result["rows"][0]), result["rows"])
         if not rows:
             raise ValueError("The local chart selection returned no rows. Adjust the selection using the saved data.")
@@ -284,7 +305,7 @@ class Tools:
         for row in rows:
             for column in [x, *series] + ([group] if group else []):
                 if column not in row:
-                    raise ValueError(f"Unknown column: {column}")
+                    raise ValueError(f"Unknown chart column: {column}. Available columns: {', '.join(columns)}.")
             for column in series:
                 if row[column] is None or row[x] is None:
                     continue
@@ -315,6 +336,23 @@ class Tools:
         return response
 
     def call(self, name, arguments):
-        if name not in {tool["function"]["name"] for tool in TOOL_DEFINITIONS}:
+        definition = next((tool["function"] for tool in TOOL_DEFINITIONS
+                           if tool["function"]["name"] == name), None)
+        if definition is None:
             raise ValueError(f"Unknown tool: {name}")
+        if not isinstance(arguments, dict):
+            raise ValueError("Tool arguments must be an object.")
+        properties = definition["parameters"]["properties"]
+        missing = [key for key in definition["parameters"]["required"] if key not in arguments]
+        if missing:
+            hint = (" Every plot requires a saved result_id. Optional sql is SQLite SELECT FROM data, "
+                    f"not a new Athena query. {self._saved_results_help()}" if name == "plot" else "")
+            raise ValueError(f"{name} is missing required field(s): {', '.join(missing)}.{hint}")
+        unexpected = [key for key in arguments if key not in properties]
+        if unexpected:
+            raise ValueError(f"{name} has unknown field(s): {', '.join(unexpected)}. "
+                             f"Allowed fields: {', '.join(properties)}.")
+        for key, value in arguments.items():
+            if properties[key].get("type") == "string" and not isinstance(value, str):
+                raise ValueError(f"{name}.{key} must be a string.")
         return getattr(self, name)(**arguments)

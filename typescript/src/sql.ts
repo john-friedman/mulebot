@@ -127,7 +127,7 @@ const quote = (value: string) => '"' + value.replaceAll('"', '""') + '"';
 
 export async function localRows(result: QueryResult, sql: string): Promise<{columns: string[]; rows: Row[]}> {
   if (typeof sql !== 'string' || !/^\s*(?:SELECT|WITH)\b/i.test(sql.replace(/--[^\n]*|\/\*[\s\S]*?\*\//g, ' '))) {
-    throw new Error('Local SQL must be one read-only SQLite SELECT FROM data.');
+    throw new Error('Local SQL must be one read-only SQLite SELECT FROM data over the saved result. Athena tables are not available; use the saved column names.');
   }
   const SQL = await (sqlite ??= initSqlJs());
   const database = new SQL.Database();
@@ -175,5 +175,8 @@ export async function localRows(result: QueryResult, sql: string): Promise<{colu
       if (!statements.next().done) throw new Error('Only one local SELECT query is allowed.');
       return {columns: names, rows};
     } finally { statement.free(); }
+  } catch (error) {
+    const detail = error instanceof Error ? error.message : String(error);
+    throw new Error(`Local SQLite query failed: ${detail} Only the saved table data is available (columns: ${result.columns.join(', ')}). Use SQLite syntax; Athena tables, TRY_CAST, and CARDINALITY are not available here.`);
   } finally { database.close(); }
 }

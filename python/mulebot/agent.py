@@ -33,10 +33,21 @@ or reshape saved rows locally. Fetch from Datamule again only for new facts.
 Keep the requested scope and time range; report gaps instead of expanding the search.
 Compute derived values in SQL. Use the same saved final result for the answer and chart.
 Fix SQL errors from their specific messages without weakening the request.
-Use plot for charts and write_markdown for substantial reports, not to duplicate
-small tables already in chat. Artifacts display automatically; do not print their JSON.
+Use plot for charts and write_markdown for substantial Markdown reports, not to
+duplicate small tables already in chat. Markdown artifacts display text, not HTML
+or SVG charts. Do not use write_markdown as a fallback for a failed plot.
+Artifacts display automatically; do not print their JSON.
 
-Note that SQL is Athena SQL.
+New query calls without result_id use Athena SQL. query calls with result_id and
+plot.sql use SQLite SELECT FROM data over that saved result; Athena tables are
+not available locally. Every plot requires a saved result_id. For example, if
+query_5 has columns filingdate, rpo_b, and company:
+plot(title="Oracle RPO", result_id="query_5", kind="line", x="filingdate",
+     y="rpo_b", sql="SELECT * FROM data WHERE company = 'Oracle'").
+For separate charts, call plot once per company using the same saved result.
+If a tool call fails, correct the arguments using its error message and saved
+results. A rejected call is not evidence of a browser rendering failure.
+Only say a chart was created after plot returns an artifact_id.
 """
 
 

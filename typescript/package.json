@@ -29,6 +29,7 @@
   "scripts": {
     "build": "node scripts/build.js",
     "typecheck": "tsc --noEmit --emitDeclarationOnly false",
+    "test": "npm run build && node --test tests/*.test.js",
     "serve": "npm run build && node dist/cli.js serve",
     "chat": "npm run build && node dist/cli.js chat",
     "prepack": "npm run build"
