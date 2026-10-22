@@ -1,6 +1,6 @@
 {
   "name": "mulebot",
-  "version": "0.1.0",
+  "version": "0.1.2",
   "description": "TypeScript chatbot for Datamule APIs",
   "author": "John Friedman",
   "repository": {
