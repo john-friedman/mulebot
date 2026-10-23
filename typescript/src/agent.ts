@@ -1,6 +1,8 @@
-import {DEFAULT_MODEL, INSTRUCTIONS, TOOL_DEFINITIONS, TOOL_LIMIT} from './config.js';
+import {DEFAULT_MODEL, INSTRUCTIONS, TOOL_LIMIT} from './config.js';
 import {documentationContext} from './context.js';
 import {Tools} from './tools.js';
+import {validateTools} from './tool.js';
+import type {Tool} from './tool.js';
 import {environment, isObject} from './types.js';
 import type {ChatState, Event, Message, Options} from './types.js';
 
@@ -11,7 +13,9 @@ export function reasoningText(response: Record<string, any>): string {
 }
 
 export class Agent {
-  readonly tools: Tools;
+  private readonly toolState: Tools;
+  instructions = INSTRUCTIONS;
+  doc = documentationContext;
   readonly model: string;
   messages: Message[];
   private readonly modelApiKey: string;
@@ -21,17 +25,60 @@ export class Agent {
     this.modelApiKey = options.modelApiKey || environment('OPENROUTER_API_KEY') || '';
     const apiKey = options.apiKey || environment('DATAMULE_API_KEY') || '';
     if (!apiKey || !this.modelApiKey) throw new Error('Set DATAMULE_API_KEY and OPENROUTER_API_KEY.');
-    this.tools = new Tools(apiKey, options);
-    this.messages = [{role: 'system', content: `Today is ${new Date().toISOString().slice(0, 10)}.\n\n<documentation>\n${documentationContext}\n</documentation>\n\n${INSTRUCTIONS}`}];
+    this.toolState = new Tools(apiKey, options);
+    this.messages = [];
+    this.updateSystemMessage();
+  }
+
+  get tools(): readonly Tool[] { return this.toolState.registry.map(tool => ({...tool, parameters: structuredClone(tool.parameters)})); }
+  get results() { return this.toolState.results; }
+  get artifacts() { return this.toolState.artifacts; }
+
+  setInstructions(text: string): this {
+    if (typeof text !== 'string') throw new Error('Instructions must be a string.');
+    this.instructions = text;
+    this.updateSystemMessage();
+    return this;
+  }
+
+  appendInstructions(text: string): this {
+    if (typeof text !== 'string') throw new Error('Instructions must be a string.');
+    return this.setInstructions([this.instructions, text].filter(Boolean).join('\n\n'));
+  }
+
+  setDoc(text: string): this {
+    if (typeof text !== 'string') throw new Error('Documentation must be a string.');
+    this.doc = text;
+    this.updateSystemMessage();
+    return this;
+  }
+
+  appendDoc(text: string): this {
+    if (typeof text !== 'string') throw new Error('Documentation must be a string.');
+    return this.setDoc([this.doc, text].filter(Boolean).join('\n\n'));
+  }
+
+  setTools(tools: readonly Tool[]): this {
+    this.toolState.registry = validateTools(tools);
+    return this;
+  }
+
+  appendTools(tools: readonly Tool[]): this {
+    if (!Array.isArray(tools)) throw new Error('Tools must be an array.');
+    return this.setTools([...this.tools, ...tools]);
+  }
+
+  private updateSystemMessage(): void {
+    this.messages[0] = {role: 'system', content: `Today is ${new Date().toISOString().slice(0, 10)}.\n\n<documentation>\n${this.doc}\n</documentation>\n\n${this.instructions}`};
   }
 
   redact(text: string): string {
-    for (const key of [this.modelApiKey, this.tools.apiKey]) text = text.replaceAll(key, '[redacted]');
+    for (const key of [this.modelApiKey, this.toolState.apiKey]) text = text.replaceAll(key, '[redacted]');
     return text;
   }
 
   exportState(): ChatState {
-    return JSON.parse(this.redact(JSON.stringify({messages: this.messages.slice(1), results: this.tools.results, artifacts: this.tools.artifacts})));
+    return JSON.parse(this.redact(JSON.stringify({messages: this.messages.slice(1), results: this.toolState.results, artifacts: this.toolState.artifacts})));
   }
 
   loadState(state: unknown): void {
@@ -60,20 +107,20 @@ export class Agent {
     }
     if (!artifacts.every(isObject)) throw new Error('Invalid saved artifacts.');
     this.messages = [this.messages[0], ...structuredClone(restored)];
-    this.tools.results = structuredClone(results) as ChatState['results'];
-    this.tools.artifacts = structuredClone(artifacts) as ChatState['artifacts'];
+    this.toolState.results = structuredClone(results) as ChatState['results'];
+    this.toolState.artifacts = structuredClone(artifacts) as ChatState['artifacts'];
   }
 
   async complete(toolChoice: 'auto' | 'none'): Promise<Record<string, any>> {
     const messages = [...this.messages];
-    if (Object.keys(this.tools.results).length) {
-      const saved = Object.fromEntries(Object.entries(this.tools.results).map(([id, result]) => [id, {columns: result.columns, row_count: result.rows.length, sql: result.sql}]));
+    if (Object.keys(this.toolState.results).length) {
+      const saved = Object.fromEntries(Object.entries(this.toolState.results).map(([id, result]) => [id, {columns: result.columns, row_count: result.rows.length, sql: result.sql}]));
       messages.push({role: 'system', content: 'These results are already saved and remain available even if older chat was trimmed. Use query(result_id=...) or plot.sql to read them locally instead of paying to fetch the same data again. Local SQL reads the table data using SQLite.\n' + JSON.stringify(saved)});
     }
     const response = await (this.options.fetch ?? globalThis.fetch)('https://openrouter.ai/api/v1/chat/completions', {
       method: 'POST', headers: {Authorization: `Bearer ${this.modelApiKey}`, 'Content-Type': 'application/json'},
-      body: JSON.stringify({model: this.model, messages, tools: TOOL_DEFINITIONS, tool_choice: toolChoice,
-        max_tokens: 8192, parallel_tool_calls: false,
+      body: JSON.stringify({model: this.model, messages, ...(this.toolState.registry.length ? {tools: this.toolState.definitions, tool_choice: toolChoice, parallel_tool_calls: false} : {}),
+        max_tokens: 8192,
         reasoning: {effort: this.options.reasoningEffort || environment('MULEBOT_REASONING_EFFORT') || 'medium', exclude: false}}),
       signal: this.options.signal ? AbortSignal.any([this.options.signal, AbortSignal.timeout(180000)]) : AbortSignal.timeout(180000),
     });
@@ -130,22 +177,26 @@ export class Agent {
           const name = call.function.name;
           yield {type: 'tool_call', id: call.id, name, arguments: call.function.arguments,
             llm_cost: completion.usage?.cost, llm_cost_shared: calls.length > 1, reasoning: this.redact(reasoningText(response))};
-          const previousResults = new Set(Object.keys(this.tools.results));
-          const firstArtifact = this.tools.artifacts.length;
+          const previousResults = new Set(Object.keys(this.toolState.results));
+          const firstArtifact = this.toolState.artifacts.length;
           const started = performance.now();
-          let result: Record<string, any>;
+          let result: unknown;
           try {
             if (remaining <= 0) throw new Error('Tool budget reached. Answer using existing results.');
             remaining--;
-            result = await this.tools.call(name, JSON.parse(call.function.arguments));
+            result = await this.toolState.call(name, JSON.parse(call.function.arguments));
+            if (result === undefined) result = null;
+            const serialized = JSON.stringify(result);
+            if (serialized === undefined) throw new Error('Tool results must be JSON-serializable.');
+            result = JSON.parse(serialized);
           } catch (error) {
             result = {error: this.redact(String(error instanceof Error ? error.message : error)).slice(0, 2000)};
-            if (isObject(error) && error.metadata) result.metadata = error.metadata;
+            if (isObject(error) && error.metadata && isObject(result)) result.metadata = error.metadata;
           }
           this.messages.push({role: 'tool', tool_call_id: call.id, content: JSON.stringify(result)});
           yield {type: 'tool_result', id: call.id, name, result, duration_ms: Math.round(performance.now() - started)};
-          for (const [id, saved] of Object.entries(this.tools.results)) if (!previousResults.has(id)) yield {type: 'query_result', result_id: id, ...saved};
-          for (let index = firstArtifact; index < this.tools.artifacts.length; index++) yield {type: 'artifact', artifact_id: index + 1, artifact: this.tools.artifacts[index]};
+          for (const [id, saved] of Object.entries(this.toolState.results)) if (!previousResults.has(id)) yield {type: 'query_result', result_id: id, ...saved};
+          for (let index = firstArtifact; index < this.toolState.artifacts.length; index++) yield {type: 'artifact', artifact_id: index + 1, artifact: this.toolState.artifacts[index]};
         }
       }
     } catch (error) {

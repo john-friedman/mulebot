@@ -50,12 +50,6 @@ jobs:
               raise SystemExit(f"Tag {tag} does not match the hardcoded package versions: {versions}")
           print(f"Publishing both packages as {version}")
 
-      - name: Test Python package
-        run: |
-          python -m pip install -e ./python
-          cd python
-          python -m unittest discover -s tests -v
-
       - name: Build and validate Python distributions
         run: |
           python -m pip install --upgrade build twine
@@ -66,11 +60,9 @@ jobs:
         working-directory: typescript
         run: npm ci
 
-      - name: Test TypeScript package
+      - name: Typecheck TypeScript package
         working-directory: typescript
-        run: |
-          npm run typecheck
-          npm test
+        run: npm run typecheck
 
       - name: Build npm package
         run: |

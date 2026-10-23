@@ -5,7 +5,8 @@ import urllib.request
 from datetime import date
 from time import perf_counter, time
 
-from .tools import TOOL_DEFINITIONS, Tools, documentation_context
+from .tools import Tools, documentation_context
+from .tool import validate_tools
 
 
 DEFAULT_MODEL = "deepseek/deepseek-v4.1-flash-1017:nitro"
@@ -68,15 +69,67 @@ class Agent:
         api_key = api_key or os.environ.get("DATAMULE_API_KEY")
         if not api_key or not self.model_api_key:
             raise ValueError("Set DATAMULE_API_KEY and OPENROUTER_API_KEY.")
-        self.tools = Tools(api_key, allowed_tables=allowed_tables)
-        context = f"Today is {date.today().isoformat()}.\n\n<documentation>\n"
-        context += documentation_context() + "\n</documentation>\n\n" + INSTRUCTIONS
-        self.messages = [{"role": "system", "content": context}]
+        self._tool_state = Tools(api_key, allowed_tables=allowed_tables)
+        self.instructions = INSTRUCTIONS
+        self.doc = documentation_context()
+        self.messages = []
+        self._update_system_message()
+
+    @property
+    def tools(self):
+        """All active tools, including built-ins. Use set_tools/append_tools to change them."""
+        return validate_tools(self._tool_state.registry)
+
+    @property
+    def results(self):
+        return self._tool_state.results
+
+    @property
+    def artifacts(self):
+        return self._tool_state.artifacts
+
+    def set_instructions(self, text):
+        if not isinstance(text, str):
+            raise TypeError("Instructions must be a string.")
+        self.instructions = text
+        self._update_system_message()
+        return self
+
+    def append_instructions(self, text):
+        if not isinstance(text, str):
+            raise TypeError("Instructions must be a string.")
+        return self.set_instructions("\n\n".join(part for part in (self.instructions, text) if part))
+
+    def set_doc(self, text):
+        if not isinstance(text, str):
+            raise TypeError("Documentation must be a string.")
+        self.doc = text
+        self._update_system_message()
+        return self
+
+    def append_doc(self, text):
+        if not isinstance(text, str):
+            raise TypeError("Documentation must be a string.")
+        return self.set_doc("\n\n".join(part for part in (self.doc, text) if part))
+
+    def set_tools(self, tools):
+        self._tool_state.registry = validate_tools(tools)
+        return self
+
+    def append_tools(self, tools):
+        if not isinstance(tools, (list, tuple)):
+            raise TypeError("Tools must be a list or tuple.")
+        return self.set_tools([*self.tools, *tools])
+
+    def _update_system_message(self):
+        content = (f"Today is {date.today().isoformat()}.\n\n<documentation>\n"
+                   + self.doc + "\n</documentation>\n\n" + self.instructions)
+        self.messages[:1] = [{"role": "system", "content": content}]
 
     def export_state(self):
         """Return browser-held chat data, without credentials or system instructions."""
-        state = {"messages": self.messages[1:], "results": self.tools.results,
-                 "artifacts": self.tools.artifacts}
+        state = {"messages": self.messages[1:], "results": self._tool_state.results,
+                 "artifacts": self._tool_state.artifacts}
         return json.loads(self._redact(json.dumps(state, ensure_ascii=False)))
 
     def load_state(self, state):
@@ -129,29 +182,30 @@ class Agent:
         if not all(isinstance(artifact, dict) for artifact in artifacts):
             raise ValueError("Invalid saved artifacts.")
         self.messages = self.messages[:1] + restored
-        self.tools.results = results
-        self.tools.artifacts = artifacts
+        self._tool_state.results = results
+        self._tool_state.artifacts = artifacts
 
     def _redact(self, text):
-        for key in [self.model_api_key, self.tools.api_key]:
+        for key in [self.model_api_key, self._tool_state.api_key]:
             text = text.replace(key, "[redacted]")
         return text
 
     def _complete(self, tool_choice):
         messages = list(self.messages)
-        if self.tools.results:
+        if self._tool_state.results:
             saved = {key: {"columns": value["columns"], "row_count": len(value["rows"]), "sql": value["sql"]}
-                     for key, value in self.tools.results.items()}
+                     for key, value in self._tool_state.results.items()}
             messages.append({"role": "system", "content":
                 "These results are already saved and remain available even if older chat was trimmed. "
                 "Use query(result_id=...) or plot.sql to read them locally instead of paying to fetch "
                 "the same data again. Local SQL reads the table data using SQLite.\n" + json.dumps(saved)})
         payload = {
             "model": self.model, "messages": messages,
-            "tools": TOOL_DEFINITIONS, "tool_choice": tool_choice,
-            "max_tokens": 8192, "parallel_tool_calls": False,
+            "max_tokens": 8192,
             "reasoning": {"effort": os.environ.get("MULEBOT_REASONING_EFFORT", "medium"), "exclude": False},
         }
+        if self._tool_state.registry:
+            payload.update(tools=self._tool_state.definitions, tool_choice=tool_choice, parallel_tool_calls=False)
         request = urllib.request.Request(
             "https://openrouter.ai/api/v1/chat/completions",
             data=json.dumps(payload).encode("utf-8"),
@@ -233,8 +287,8 @@ class Agent:
                            "llm_cost": (completion.get("usage") or {}).get("cost"),
                            "llm_cost_shared": len(calls) > 1,
                            "reasoning": self._redact(reasoning_text(response))}
-                    result_ids = set(self.tools.results)
-                    first_artifact = len(self.tools.artifacts)
+                    result_ids = set(self._tool_state.results)
+                    first_artifact = len(self._tool_state.artifacts)
                     started = perf_counter()
                     try:
                         if remaining <= 0:
@@ -243,7 +297,8 @@ class Agent:
                         arguments = json.loads(call["function"]["arguments"])
                         if not isinstance(arguments, dict):
                             raise ValueError("Tool arguments must be an object.")
-                        result = self.tools.call(name, arguments)
+                        result = self._tool_state.call(name, arguments)
+                        result = json.loads(json.dumps(result, ensure_ascii=False, allow_nan=False))
                     except Exception as exc:
                         result = {"error": self._redact(str(exc))[:2000]}
                         if getattr(exc, "metadata", None):
@@ -253,10 +308,10 @@ class Agent:
                                           "content": json.dumps(result, ensure_ascii=False)})
                     yield {"type": "tool_result", "id": call["id"], "name": name,
                            "result": result, "duration_ms": duration_ms}
-                    for result_id in self.tools.results.keys() - result_ids:
-                        yield {"type": "query_result", "result_id": result_id, **self.tools.results[result_id]}
-                    for i in range(first_artifact, len(self.tools.artifacts)):
-                        yield {"type": "artifact", "artifact_id": i + 1, "artifact": self.tools.artifacts[i]}
+                    for result_id in self._tool_state.results.keys() - result_ids:
+                        yield {"type": "query_result", "result_id": result_id, **self._tool_state.results[result_id]}
+                    for i in range(first_artifact, len(self._tool_state.artifacts)):
+                        yield {"type": "artifact", "artifact_id": i + 1, "artifact": self._tool_state.artifacts[i]}
         except Exception as exc:
             detail = self._redact(str(exc))[:2000]
             interruption = f"Turn interrupted: {detail}"

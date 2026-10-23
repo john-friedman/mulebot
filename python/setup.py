@@ -31,7 +31,7 @@ class Sdist(sdist):
 setup(
     name="mulebot",
     author="John Friedman",
-    version="0.1.2",
+    version="0.2.0",
     description="A simple chatbot for Datamule's APIs",
     url="https://github.com/john-friedman/mulebot",
     license="MIT",

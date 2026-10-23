@@ -5,3 +5,4 @@ export {DEFAULT_MODEL, INSTRUCTIONS, TOOL_DEFINITIONS, TOOL_LIMIT} from './confi
 export {documentationContext} from './context.js';
 export type {ChatState, Event, Options, QueryResult, Artifact, Message, Row} from './types.js';
 export type {HandlerOptions} from './http.js';
+export type {Tool, ToolContext} from './tool.js';

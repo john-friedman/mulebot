@@ -2,6 +2,8 @@ import {TOOL_DEFINITIONS} from './config.js';
 import {localRows, parseSelect, resultTypes, validateTables} from './sql.js';
 import type {Artifact, Options, QueryResult, Row} from './types.js';
 import {isObject} from './types.js';
+import {toolDefinition, validateArguments, validateTools} from './tool.js';
+import type {Tool} from './tool.js';
 
 const SITE = 'https://datamule.xyz';
 const API = 'https://api.datamule.xyz/v3/athena/query/preview';
@@ -13,10 +15,19 @@ export class ApiError extends Error {
 export class Tools {
   results: Record<string, QueryResult> = Object.create(null);
   artifacts: Artifact[] = [];
+  registry: Tool[];
   private catalog?: Set<string>;
   private allowedTables: Set<string> | null;
   constructor(public apiKey: string, private options: Options = {}) {
     this.allowedTables = options.allowedTables == null ? null : new Set(options.allowedTables.map(name => name.toLowerCase()));
+    const handlers: Record<string, Tool['execute']> = {
+      query: args => this.query(args),
+      plot: args => this.plot(args),
+      write_markdown: args => this.writeMarkdown(args),
+    };
+    this.registry = validateTools(TOOL_DEFINITIONS.map(({function: definition}) => ({
+      ...definition, execute: handlers[definition.name],
+    })));
   }
 
   private savedResultsHelp(): string {
@@ -121,28 +132,21 @@ export class Tools {
     return {artifact_id: this.artifacts.length, title, result_id, ...(sql ? {columns, rows, row_count: rows.length} : {})};
   }
 
-  async call(name: string, arguments_: unknown): Promise<Record<string, any>> {
-    const tool = TOOL_DEFINITIONS.find(tool => tool.function.name === name)?.function;
+  get definitions() {
+    return this.registry.map(toolDefinition);
+  }
+
+  async call(name: string, arguments_: unknown): Promise<unknown> {
+    const tool = this.registry.find(tool => tool.name === name);
     if (!tool) throw new Error(`Unknown tool: ${name}`);
     if (!isObject(arguments_)) throw new Error('Tool arguments must be an object.');
-    const properties = tool.parameters.properties as Record<string, unknown>;
-    const missing = tool.parameters.required.filter(key => !Object.hasOwn(arguments_, key));
-    if (missing.length) {
-      const hint = name === 'plot' ? ` Every plot requires a saved result_id. Optional sql is SQLite SELECT FROM data, not a new Athena query. ${this.savedResultsHelp()}` : '';
-      throw new Error(`${name} is missing required field(s): ${missing.join(', ')}.${hint}`);
-    }
-    const unexpected = Object.keys(arguments_).filter(key => !Object.hasOwn(properties, key));
-    if (unexpected.length) throw new Error(`${name} has unknown field(s): ${unexpected.join(', ')}. Allowed fields: ${Object.keys(properties).join(', ')}.`);
-    for (const [key, value] of Object.entries(arguments_)) {
-      if ((properties[key] as {type?: string}).type === 'string' && typeof value !== 'string') {
-        throw new Error(`${name}.${key} must be a string.`);
+    try { validateArguments(arguments_, tool.parameters, name); }
+    catch (error) {
+      if (name === 'plot' && error instanceof Error && error.message.includes('missing required field(s)')) {
+        throw new Error(`${error.message} Every plot requires a saved result_id. Optional sql is SQLite SELECT FROM data, not a new Athena query. ${this.savedResultsHelp()}`);
       }
+      throw error;
     }
-    switch (name) {
-      case 'query': return this.query(arguments_ as Parameters<Tools['query']>[0]);
-      case 'plot': return this.plot(arguments_ as Parameters<Tools['plot']>[0]);
-      case 'write_markdown': return this.writeMarkdown(arguments_ as Parameters<Tools['writeMarkdown']>[0]);
-      default: throw new Error(`Unknown tool: ${name}`);
-    }
+    return await tool.execute(arguments_, {results: this.results, artifacts: this.artifacts, signal: this.options.signal});
   }
 }

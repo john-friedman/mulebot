@@ -12,6 +12,7 @@ from sqlglot.optimizer.annotate_types import annotate_types
 from sqlglot.optimizer.scope import traverse_scope
 
 from .assets import resource
+from .tool import Tool, validate_arguments, validate_tools
 
 
 SITE = "https://datamule.xyz"
@@ -73,7 +74,7 @@ def documentation_context():
     )
 
 
-def tool(name, description, properties, required=()):
+def _tool_definition(name, description, properties, required=()):
     return {
         "type": "function",
         "function": {
@@ -89,7 +90,7 @@ def tool(name, description, properties, required=()):
 
 STRING = {"type": "string"}
 TOOL_DEFINITIONS = [
-    tool("query", "Fetch the user's complete requested dataset with one read-only Athena SELECT. "
+    _tool_definition("query", "Fetch the user's complete requested dataset with one read-only Athena SELECT. "
          "Resolve identifiers in subqueries/CTEs within this SQL instead of separate lookup calls. "
          "Filter comparable records and deduplicate/aggregate before returning rows; do not fetch "
          "raw samples just to inspect them. Athena date differences use date_diff('day', start, end), "
@@ -100,9 +101,9 @@ TOOL_DEFINITIONS = [
              "sql": {"type": "string", "description": "Athena SQL for a new Datamule query, SQLite SQL for saved results. SQLite durations use julianday(end) - julianday(start), not CAST AS DATE or year subtraction."},
              "result_id": {"type": "string", "description": "Optional saved result to query locally using SQLite; omit only when fetching new data from Datamule."},
          }, ["sql"]),
-    tool("write_markdown", "Create a text Markdown report for the caller to display or save. HTML and SVG are displayed as text, not rendered. Use plot for charts; fix a failed plot call instead of embedding SVG in Markdown.",
+    _tool_definition("write_markdown", "Create a text Markdown report for the caller to display or save. HTML and SVG are displayed as text, not rendered. Use plot for charts; fix a failed plot call instead of embedding SVG in Markdown.",
          {"title": STRING, "markdown": STRING}, ["title", "markdown"]),
-    tool("plot", "Create one chart artifact from a required saved result_id returned by query. This tool never fetches new data. For separate charts, call plot separately with the same result_id and different local sql filters. Chart the final analysis rows used in your answer without querying Datamule again. y is a numeric column or a list of numeric columns for multiple lines; group is a categorical column, not another y. Optional sql filters or reshapes the saved rows using a read-only SQLite SELECT FROM data (SQLite dates use julianday; arrays/objects are JSON). Use this to reuse data on follow-ups. Line charts sort x ascending. Supply human-readable axis labels including units.", {
+    _tool_definition("plot", "Create one chart artifact from a required saved result_id returned by query. This tool never fetches new data. For separate charts, call plot separately with the same result_id and different local sql filters. Chart the final analysis rows used in your answer without querying Datamule again. y is a numeric column or a list of numeric columns for multiple lines; group is a categorical column, not another y. Optional sql filters or reshapes the saved rows using a read-only SQLite SELECT FROM data (SQLite dates use julianday; arrays/objects are JSON). Use this to reuse data on follow-ups. Line charts sort x ascending. Supply human-readable axis labels including units.", {
              "title": STRING, "result_id": {"type": "string", "description": "Required ID of a saved query result, such as query_5. Use its column names for x, y, and group. Fetch missing data with query first; never put a fresh Athena query into plot.sql."},
              "kind": {"type": "string", "enum": ["line", "bar", "scatter"]},
              "x": STRING, "y": {"anyOf": [STRING, {"type": "array", "items": STRING, "minItems": 1}]},
@@ -120,6 +121,11 @@ class Tools:
         self.catalog = None
         self.results = {}
         self.artifacts = []
+        self.registry = validate_tools([
+            Tool(definition["function"]["name"], definition["function"]["description"],
+                 definition["function"]["parameters"], getattr(self, definition["function"]["name"]))
+            for definition in TOOL_DEFINITIONS
+        ])
 
     def _saved_results_help(self):
         saved = [f"{result_id} ({len(result['rows'])} rows; columns: {', '.join(result['columns'])})"
@@ -335,24 +341,21 @@ class Tools:
             response.update(columns=columns, rows=rows, row_count=len(rows))
         return response
 
+    @property
+    def definitions(self):
+        return [entry.definition for entry in self.registry]
+
     def call(self, name, arguments):
-        definition = next((tool["function"] for tool in TOOL_DEFINITIONS
-                           if tool["function"]["name"] == name), None)
-        if definition is None:
+        entry = next((entry for entry in self.registry if entry.name == name), None)
+        if entry is None:
             raise ValueError(f"Unknown tool: {name}")
         if not isinstance(arguments, dict):
             raise ValueError("Tool arguments must be an object.")
-        properties = definition["parameters"]["properties"]
-        missing = [key for key in definition["parameters"]["required"] if key not in arguments]
-        if missing:
-            hint = (" Every plot requires a saved result_id. Optional sql is SQLite SELECT FROM data, "
-                    f"not a new Athena query. {self._saved_results_help()}" if name == "plot" else "")
-            raise ValueError(f"{name} is missing required field(s): {', '.join(missing)}.{hint}")
-        unexpected = [key for key in arguments if key not in properties]
-        if unexpected:
-            raise ValueError(f"{name} has unknown field(s): {', '.join(unexpected)}. "
-                             f"Allowed fields: {', '.join(properties)}.")
-        for key, value in arguments.items():
-            if properties[key].get("type") == "string" and not isinstance(value, str):
-                raise ValueError(f"{name}.{key} must be a string.")
-        return getattr(self, name)(**arguments)
+        try:
+            validate_arguments(arguments, entry.parameters, name)
+        except ValueError as exc:
+            if name == "plot" and "missing required field(s)" in str(exc):
+                raise ValueError(f"{exc} Every plot requires a saved result_id. Optional sql is SQLite "
+                                 f"SELECT FROM data, not a new Athena query. {self._saved_results_help()}") from None
+            raise
+        return entry.execute(**arguments)
