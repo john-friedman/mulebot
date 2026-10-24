@@ -1,5 +1,6 @@
 import json
 import math
+import os
 import re
 import sqlite3
 import urllib.error
@@ -115,8 +116,10 @@ TOOL_DEFINITIONS = [
 
 
 class Tools:
-    def __init__(self, api_key, allowed_tables=None):
-        self.api_key = api_key
+    def __init__(self, *, allowed_tables=None):
+        self.api_key = os.environ.get("DATAMULE_API_KEY", "")
+        if not self.api_key.strip():
+            raise ValueError("Set DATAMULE_API_KEY.")
         self.allowed_tables = None if allowed_tables is None else {t.lower() for t in allowed_tables}
         self.catalog = None
         self.results = {}

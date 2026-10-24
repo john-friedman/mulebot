@@ -1,10 +1,11 @@
-import {DEFAULT_MODEL, INSTRUCTIONS, TOOL_LIMIT} from './config.js';
+import {INSTRUCTIONS, TOOL_LIMIT} from './config.js';
+import {buildRequest, credentials, normalizeResponse, resolveModel} from './providers.js';
 import {documentationContext} from './context.js';
 import {Tools} from './tools.js';
 import {validateTools} from './tool.js';
 import type {Tool} from './tool.js';
 import {environment, isObject} from './types.js';
-import type {ChatState, Event, Message, Options} from './types.js';
+import type {ChatState, Event, Message, Options, Provider} from './types.js';
 
 export function reasoningText(response: Record<string, any>): string {
   const parts = (response.reasoning_details ?? []).map((detail: Record<string, any>) =>
@@ -15,17 +16,18 @@ export function reasoningText(response: Record<string, any>): string {
 export class Agent {
   private readonly toolState: Tools;
   instructions = INSTRUCTIONS;
-  doc = documentationContext;
+  documentation = documentationContext;
   readonly model: string;
+  readonly provider: Provider;
   messages: Message[];
   private readonly modelApiKey: string;
 
-  constructor(private options: Options = {}) {
-    this.model = options.model || environment('MULEBOT_MODEL') || DEFAULT_MODEL;
-    this.modelApiKey = options.modelApiKey || environment('OPENROUTER_API_KEY') || '';
-    const apiKey = options.apiKey || environment('DATAMULE_API_KEY') || '';
-    if (!apiKey || !this.modelApiKey) throw new Error('Set DATAMULE_API_KEY and OPENROUTER_API_KEY.');
-    this.toolState = new Tools(apiKey, options);
+  constructor(private options: Options) {
+    if (options && ('apiKey' in options || 'modelApiKey' in options)) throw new Error('Credentials must be set through environment variables.');
+    this.provider = options?.provider;
+    this.model = resolveModel(this.provider, options?.model);
+    this.modelApiKey = credentials(this.provider);
+    this.toolState = new Tools(options);
     this.messages = [];
     this.updateSystemMessage();
   }
@@ -46,16 +48,16 @@ export class Agent {
     return this.setInstructions([this.instructions, text].filter(Boolean).join('\n\n'));
   }
 
-  setDoc(text: string): this {
+  setDocumentation(text: string): this {
     if (typeof text !== 'string') throw new Error('Documentation must be a string.');
-    this.doc = text;
+    this.documentation = text;
     this.updateSystemMessage();
     return this;
   }
 
-  appendDoc(text: string): this {
+  appendDocumentation(text: string): this {
     if (typeof text !== 'string') throw new Error('Documentation must be a string.');
-    return this.setDoc([this.doc, text].filter(Boolean).join('\n\n'));
+    return this.setDocumentation([this.documentation, text].filter(Boolean).join('\n\n'));
   }
 
   setTools(tools: readonly Tool[]): this {
@@ -69,7 +71,7 @@ export class Agent {
   }
 
   private updateSystemMessage(): void {
-    this.messages[0] = {role: 'system', content: `Today is ${new Date().toISOString().slice(0, 10)}.\n\n<documentation>\n${this.doc}\n</documentation>\n\n${this.instructions}`};
+    this.messages[0] = {role: 'system', content: `Today is ${new Date().toISOString().slice(0, 10)}.\n\n<documentation>\n${this.documentation}\n</documentation>\n\n${this.instructions}`};
   }
 
   redact(text: string): string {
@@ -99,6 +101,13 @@ export class Agent {
         if (calls.length) entry.tool_calls = calls;
         if (Array.isArray(message.reasoning_details)) entry.reasoning_details = message.reasoning_details;
         else if (typeof message.reasoning === 'string') entry.reasoning = message.reasoning;
+        if ('provider_data' in message) {
+          const data = message.provider_data;
+          if (!isObject(data) || !['gemini', 'anthropic'].includes(data.provider) || !Array.isArray(data.content) || !data.content.every(isObject)) {
+            throw new Error('Invalid saved provider content.');
+          }
+          entry.provider_data = {provider: data.provider, content: data.content};
+        }
       }
       return entry;
     });
@@ -117,15 +126,14 @@ export class Agent {
       const saved = Object.fromEntries(Object.entries(this.toolState.results).map(([id, result]) => [id, {columns: result.columns, row_count: result.rows.length, sql: result.sql}]));
       messages.push({role: 'system', content: 'These results are already saved and remain available even if older chat was trimmed. Use query(result_id=...) or plot.sql to read them locally instead of paying to fetch the same data again. Local SQL reads the table data using SQLite.\n' + JSON.stringify(saved)});
     }
-    const response = await (this.options.fetch ?? globalThis.fetch)('https://openrouter.ai/api/v1/chat/completions', {
-      method: 'POST', headers: {Authorization: `Bearer ${this.modelApiKey}`, 'Content-Type': 'application/json'},
-      body: JSON.stringify({model: this.model, messages, ...(this.toolState.registry.length ? {tools: this.toolState.definitions, tool_choice: toolChoice, parallel_tool_calls: false} : {}),
-        max_tokens: 8192,
-        reasoning: {effort: this.options.reasoningEffort || environment('MULEBOT_REASONING_EFFORT') || 'medium', exclude: false}}),
+    const {url, headers, payload} = buildRequest(this.provider, this.model, this.modelApiKey, messages,
+      this.toolState.definitions, toolChoice, this.options.reasoningEffort || environment('MULEBOT_REASONING_EFFORT'));
+    const response = await (this.options.fetch ?? globalThis.fetch)(url, {
+      method: 'POST', headers, body: JSON.stringify(payload),
       signal: this.options.signal ? AbortSignal.any([this.options.signal, AbortSignal.timeout(180000)]) : AbortSignal.timeout(180000),
     });
     if (!response.ok) throw new Error(this.redact(`Model request failed (${response.status}): ${(await response.text()).slice(0, 2000)}`));
-    return await response.json();
+    return normalizeResponse(this.provider, await response.json());
   }
 
   async *run(message: string): AsyncGenerator<Event> {
@@ -168,6 +176,7 @@ export class Agent {
         if (calls.length) assistant.tool_calls = calls;
         if (response.reasoning_details) assistant.reasoning_details = response.reasoning_details;
         else if (response.reasoning) assistant.reasoning = response.reasoning;
+        if (response.provider_data) assistant.provider_data = response.provider_data;
         if (!calls.length && !assistant.content) throw new Error('The model returned no answer. Try again or choose another model.');
         this.messages.push(assistant);
         finished = !calls.length;

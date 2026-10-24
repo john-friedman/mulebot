@@ -3,13 +3,15 @@ import json
 import sys
 
 from .agent import Agent
+from .providers import DEFAULT_MODELS
 
 
 def main():
     if hasattr(sys.stdout, "reconfigure"):
         sys.stdout.reconfigure(encoding="utf-8")
     parser = argparse.ArgumentParser(description="Chat with Datamule's APIs.")
-    parser.add_argument("--model", help="OpenRouter model; defaults to MULEBOT_MODEL.")
+    parser.add_argument("--provider", required=True, choices=DEFAULT_MODELS, help="Model provider.")
+    parser.add_argument("--model", help="Model ID; defaults to MULEBOT_MODEL or the provider's default.")
     parser.add_argument("--tables", help="Optional comma-separated table allowlist.")
     commands = parser.add_subparsers(dest="command", required=True)
     chat = commands.add_parser("chat", help="Print raw events as newline-delimited JSON.")
@@ -17,7 +19,7 @@ def main():
     serve = commands.add_parser("serve", help="Run the local browser interface.")
     serve.add_argument("--port", type=int, default=8000)
     args = parser.parse_args()
-    settings = {"model": args.model, "allowed_tables": None}
+    settings = {"provider": args.provider, "model": args.model, "allowed_tables": None}
     if args.tables is not None:
         settings["allowed_tables"] = [name.strip() for name in args.tables.split(",") if name.strip()]
     try:

@@ -1,7 +1,7 @@
 import {TOOL_DEFINITIONS} from './config.js';
 import {localRows, parseSelect, resultTypes, validateTables} from './sql.js';
-import type {Artifact, Options, QueryResult, Row} from './types.js';
-import {isObject} from './types.js';
+import type {Artifact, ToolOptions, QueryResult, Row} from './types.js';
+import {environment, isObject} from './types.js';
 import {toolDefinition, validateArguments, validateTools} from './tool.js';
 import type {Tool} from './tool.js';
 
@@ -18,7 +18,11 @@ export class Tools {
   registry: Tool[];
   private catalog?: Set<string>;
   private allowedTables: Set<string> | null;
-  constructor(public apiKey: string, private options: Options = {}) {
+  readonly apiKey: string;
+  constructor(private options: ToolOptions = {}) {
+    if (!isObject(options) || 'apiKey' in options || 'modelApiKey' in options) throw new Error('Credentials must be set through environment variables.');
+    this.apiKey = environment('DATAMULE_API_KEY') || '';
+    if (!this.apiKey.trim()) throw new Error('Set DATAMULE_API_KEY.');
     this.allowedTables = options.allowedTables == null ? null : new Set(options.allowedTables.map(name => name.toLowerCase()));
     const handlers: Record<string, Tool['execute']> = {
       query: args => this.query(args),

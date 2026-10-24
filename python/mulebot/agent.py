@@ -7,9 +7,10 @@ from time import perf_counter, time
 
 from .tools import Tools, documentation_context
 from .tool import validate_tools
+from .providers import DEFAULT_MODELS, build_request, credentials, normalize_response, resolve_model
 
 
-DEFAULT_MODEL = "deepseek/deepseek-v4.1-flash-1017:nitro"
+DEFAULT_MODEL = DEFAULT_MODELS["openrouter"]
 TOOL_LIMIT = 50
 
 
@@ -63,15 +64,13 @@ def reasoning_text(response):
 
 
 class Agent:
-    def __init__(self, api_key=None, model=None, model_api_key=None, allowed_tables=None):
-        self.model = model or os.environ.get("MULEBOT_MODEL", DEFAULT_MODEL)
-        self.model_api_key = model_api_key or os.environ.get("OPENROUTER_API_KEY")
-        api_key = api_key or os.environ.get("DATAMULE_API_KEY")
-        if not api_key or not self.model_api_key:
-            raise ValueError("Set DATAMULE_API_KEY and OPENROUTER_API_KEY.")
-        self._tool_state = Tools(api_key, allowed_tables=allowed_tables)
+    def __init__(self, provider, *, model=None, allowed_tables=None):
+        self.provider = provider
+        self.model = resolve_model(provider, model)
+        self.model_api_key = credentials(provider)
+        self._tool_state = Tools(allowed_tables=allowed_tables)
         self.instructions = INSTRUCTIONS
-        self.doc = documentation_context()
+        self.documentation = documentation_context()
         self.messages = []
         self._update_system_message()
 
@@ -100,17 +99,17 @@ class Agent:
             raise TypeError("Instructions must be a string.")
         return self.set_instructions("\n\n".join(part for part in (self.instructions, text) if part))
 
-    def set_doc(self, text):
+    def set_documentation(self, text):
         if not isinstance(text, str):
             raise TypeError("Documentation must be a string.")
-        self.doc = text
+        self.documentation = text
         self._update_system_message()
         return self
 
-    def append_doc(self, text):
+    def append_documentation(self, text):
         if not isinstance(text, str):
             raise TypeError("Documentation must be a string.")
-        return self.set_doc("\n\n".join(part for part in (self.doc, text) if part))
+        return self.set_documentation("\n\n".join(part for part in (self.documentation, text) if part))
 
     def set_tools(self, tools):
         self._tool_state.registry = validate_tools(tools)
@@ -123,7 +122,7 @@ class Agent:
 
     def _update_system_message(self):
         content = (f"Today is {date.today().isoformat()}.\n\n<documentation>\n"
-                   + self.doc + "\n</documentation>\n\n" + self.instructions)
+                   + self.documentation + "\n</documentation>\n\n" + self.instructions)
         self.messages[:1] = [{"role": "system", "content": content}]
 
     def export_state(self):
@@ -168,6 +167,13 @@ class Agent:
                     entry["reasoning_details"] = message["reasoning_details"]
                 elif isinstance(message.get("reasoning"), str):
                     entry["reasoning"] = message["reasoning"]
+                if "provider_data" in message:
+                    data = message["provider_data"]
+                    if (not isinstance(data, dict) or data.get("provider") not in ("gemini", "anthropic")
+                            or not isinstance(data.get("content"), list)
+                            or not all(isinstance(block, dict) for block in data["content"])):
+                        raise ValueError("Invalid saved provider content.")
+                    entry["provider_data"] = data
             restored.append(entry)
         for result in results.values():
             if (not isinstance(result, dict) or not isinstance(result.get("sql"), str)
@@ -199,17 +205,14 @@ class Agent:
                 "These results are already saved and remain available even if older chat was trimmed. "
                 "Use query(result_id=...) or plot.sql to read them locally instead of paying to fetch "
                 "the same data again. Local SQL reads the table data using SQLite.\n" + json.dumps(saved)})
-        payload = {
-            "model": self.model, "messages": messages,
-            "max_tokens": 8192,
-            "reasoning": {"effort": os.environ.get("MULEBOT_REASONING_EFFORT", "medium"), "exclude": False},
-        }
-        if self._tool_state.registry:
-            payload.update(tools=self._tool_state.definitions, tool_choice=tool_choice, parallel_tool_calls=False)
+        url, headers, payload = build_request(
+            self.provider, self.model, self.model_api_key, messages, self._tool_state.definitions,
+            tool_choice, os.environ.get("MULEBOT_REASONING_EFFORT"),
+        )
         request = urllib.request.Request(
-            "https://openrouter.ai/api/v1/chat/completions",
+            url,
             data=json.dumps(payload).encode("utf-8"),
-            headers={"Authorization": f"Bearer {self.model_api_key}", "Content-Type": "application/json"},
+            headers=headers,
         )
         try:
             with urllib.request.urlopen(request, timeout=180) as response:
@@ -217,7 +220,7 @@ class Agent:
         except urllib.error.HTTPError as exc:
             detail = exc.read().decode("utf-8", errors="replace")[:2000]
             raise RuntimeError(self._redact(f"Model request failed ({exc.code}): {detail}")) from None
-        return result
+        return normalize_response(self.provider, result)
 
     def run(self, message):
         """Yield JSON-compatible events, independent of the CLI or browser UI."""
@@ -272,6 +275,8 @@ class Agent:
                     assistant["reasoning_details"] = response["reasoning_details"]
                 elif response.get("reasoning"):
                     assistant["reasoning"] = response["reasoning"]
+                if response.get("provider_data"):
+                    assistant["provider_data"] = response["provider_data"]
                 if not calls and not assistant["content"]:
                     raise RuntimeError("The model returned no answer. Try again or choose another model.")
                 self.messages.append(assistant)

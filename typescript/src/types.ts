@@ -31,6 +31,7 @@ export interface Message {
   tool_calls?: ToolCall[];
   reasoning?: string;
   reasoning_details?: Record<string, any>[];
+  provider_data?: {provider: 'gemini' | 'anthropic'; content: Record<string, any>[]};
 }
 export interface ChatState {
   messages: Message[];
@@ -41,14 +42,16 @@ export interface Event {
   type: string;
   [key: string]: any;
 }
-export interface Options {
-  apiKey?: string;
-  modelApiKey?: string;
-  model?: string;
+export type Provider = 'openrouter' | 'openai' | 'gemini' | 'anthropic';
+export interface ToolOptions {
   allowedTables?: string[] | null;
-  reasoningEffort?: string;
   fetch?: typeof globalThis.fetch;
   signal?: AbortSignal;
+}
+export interface Options extends ToolOptions {
+  provider: Provider;
+  model?: string;
+  reasoningEffort?: string;
 }
 
 export const isObject = (value: unknown): value is Record<string, any> =>

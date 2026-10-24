@@ -2,7 +2,8 @@ import {createServer as nodeServer} from 'node:http';
 import {readFile, access} from 'node:fs/promises';
 import {Readable} from 'node:stream';
 import {pipeline} from 'node:stream/promises';
-import {handleChat, responseHeaders, DEFAULT_MODEL} from './index.js';
+import {handleChat, responseHeaders} from './index.js';
+import {credentials, resolveModel} from './providers.js';
 import type {HandlerOptions} from './http.js';
 
 export interface ServerOptions extends HandlerOptions {port?: number}
@@ -13,8 +14,9 @@ async function asset(name: string): Promise<string> {
   catch { return await readFile(new URL(`./ui/${name}`, import.meta.url), 'utf8'); }
 }
 
-export function createServer(options: ServerOptions = {}) {
-  const model = options.model || process.env.MULEBOT_MODEL || DEFAULT_MODEL;
+export function createServer(options: ServerOptions) {
+  const model = resolveModel(options?.provider, options?.model);
+  credentials(options.provider);
   const assets: Record<string, [string, string]> = {
     '/': ['templates/index.html', 'text/html; charset=utf-8'],
     '/static/app.js': ['static/app.js', 'text/javascript; charset=utf-8'],
@@ -37,7 +39,7 @@ export function createServer(options: ServerOptions = {}) {
     try {
       const path = incoming.url ?? '';
       if (incoming.method === 'GET') {
-        if (path === '/api/config') { send(200, {model}); return; }
+        if (path === '/api/config') { send(200, {provider: options.provider, model}); return; }
         if (!Object.hasOwn(assets, path)) { send(404, {error: 'Not found.'}); return; }
         const [name, type] = assets[path];
         outgoing.writeHead(200, {...responseHeaders, 'Content-Type': type});
@@ -71,7 +73,7 @@ export function createServer(options: ServerOptions = {}) {
   return server;
 }
 
-export async function serve(options: ServerOptions = {}) {
+export async function serve(options: ServerOptions) {
   const server = createServer(options);
   await new Promise<void>((resolve, reject) => {
     server.once('error', reject); server.listen(options.port ?? 8000, '127.0.0.1', resolve);

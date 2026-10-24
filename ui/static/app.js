@@ -25,6 +25,7 @@ const toolCalls = new Map();
 const runningTools = new Set();
 let busy = false;
 let selectedModel = '';
+let selectedProvider = '';
 let agentState = null;
 const CHAT_STORAGE = 'mulebot.chat';
 let currentTools = null;
@@ -56,7 +57,7 @@ function debugHistory() {
 
 function saveChat() {
   try {
-    sessionStorage.setItem(CHAT_STORAGE, JSON.stringify({model: selectedModel, state: agentState, events: chatHistory}));
+    sessionStorage.setItem(CHAT_STORAGE, JSON.stringify({provider: selectedProvider, model: selectedModel, state: agentState, events: chatHistory}));
   } catch {
     settingsStatus.textContent = 'Chat is available in this tab but could not be saved for refresh.';
   }
@@ -522,7 +523,7 @@ function saveModel(choice) {
   if (!choice || choice === CUSTOM_MODEL) return;
   if (choice === selectedModel) { showSelectedModel(); setBusy(false); return; }
   if (choice.length > 200 || /\s/.test(choice)) {
-    settingsStatus.textContent = 'Enter an OpenRouter model ID of at most 200 characters.';
+    settingsStatus.textContent = 'Enter a model ID of at most 200 characters.';
     return;
   }
   selectedModel = choice; showSelectedModel(); clearChat(); settingsStatus.textContent = 'New chat started';
@@ -586,10 +587,13 @@ setBusy(true);
 fetch('/api/config').then(async response => {
   if (!response.ok) throw new Error('Could not load chat.');
   const config = await response.json(); selectedModel = config.model;
+  selectedProvider = config.provider;
+  if (selectedProvider !== 'openrouter') model.querySelector('optgroup')?.remove();
+  settingsStatus.textContent = `Provider: ${selectedProvider}`;
   let saved = null;
   try { saved = JSON.parse(sessionStorage.getItem(CHAT_STORAGE) || 'null'); }
   catch { settingsStatus.textContent = 'Could not restore the saved chat.'; }
-  if (saved && typeof saved.model === 'string' && Array.isArray(saved.events)) {
+  if (saved && saved.provider === selectedProvider && typeof saved.model === 'string' && Array.isArray(saved.events)) {
     selectedModel = saved.model; agentState = saved.state;
     for (const event of saved.events) apply(event);
     finishTools();

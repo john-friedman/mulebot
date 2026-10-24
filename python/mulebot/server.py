@@ -1,10 +1,10 @@
 import json
-import os
 import sys
 from contextlib import closing
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
-from .agent import Agent, DEFAULT_MODEL
+from .agent import Agent
+from .providers import credentials, resolve_model
 from .assets import resource
 
 
@@ -43,7 +43,7 @@ class Handler(BaseHTTPRequestHandler):
             "/static/style.css": ("static/style.css", "text/css; charset=utf-8"),
         }
         if self.path == "/api/config":
-            self.send_json(200, {"model": self.server.default_model})
+            self.send_json(200, {"provider": self.server.provider, "model": self.server.default_model})
         elif self.path in assets:
             name, content_type = assets[self.path]
             body = resource("ui", *name.split("/")).read_text(encoding="utf-8")
@@ -75,7 +75,7 @@ class Handler(BaseHTTPRequestHandler):
                 raise ValueError("Enter a message of at most 16,000 characters.")
             model = body.get("model", self.server.default_model)
             if not isinstance(model, str) or not model.strip() or len(model) > 200 or any(c.isspace() for c in model.strip()):
-                raise ValueError("Enter an OpenRouter model ID of at most 200 characters.")
+                raise ValueError("Enter a model ID of at most 200 characters.")
             bot = self.server.agent_factory(model=model.strip())
             bot.load_state(body.get("state"))
         except (ValueError, UnicodeError) as exc:
@@ -94,15 +94,18 @@ class Handler(BaseHTTPRequestHandler):
             pass
 
 
-def create_server(port=8000, model=None, allowed_tables=None):
+def create_server(provider, *, port=8000, model=None, allowed_tables=None):
+    default_model = resolve_model(provider, model)
+    credentials(provider)
     server = ThreadingHTTPServer(("127.0.0.1", port), Handler)
-    server.default_model = model or os.environ.get("MULEBOT_MODEL", DEFAULT_MODEL)
-    server.agent_factory = lambda **settings: Agent(allowed_tables=allowed_tables, **settings)
+    server.provider = provider
+    server.default_model = default_model
+    server.agent_factory = lambda **settings: Agent(provider, allowed_tables=allowed_tables, **settings)
     return server
 
 
-def serve(port=8000, model=None, allowed_tables=None):
-    with create_server(port, model, allowed_tables) as server:
+def serve(provider, *, port=8000, model=None, allowed_tables=None):
+    with create_server(provider, port=port, model=model, allowed_tables=allowed_tables) as server:
         print(f"Mulebot: http://localhost:{server.server_port}", file=sys.stderr, flush=True)
         try:
             server.serve_forever()
