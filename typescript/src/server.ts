@@ -16,7 +16,7 @@ async function asset(name: string): Promise<string> {
 
 export function createServer(options: ServerOptions) {
   const model = resolveModel(options?.provider, options?.model);
-  credentials(options.provider);
+  const keys = credentials(options.provider, options);
   const assets: Record<string, [string, string]> = {
     '/': ['templates/index.html', 'text/html; charset=utf-8'],
     '/static/app.js': ['static/app.js', 'text/javascript; charset=utf-8'],
@@ -58,7 +58,7 @@ export function createServer(options: ServerOptions) {
         method: 'POST', headers: incoming.headers as Record<string, string>,
         body: Buffer.concat(chunks), signal: controller.signal,
       });
-      const response = await handleChat(request, {...options, model});
+      const response = await handleChat(request, {...options, ...keys, model});
       outgoing.writeHead(response.status, Object.fromEntries(response.headers));
       outgoing.flushHeaders();
       if (response.body) await pipeline(Readable.fromWeb(response.body as any), outgoing);

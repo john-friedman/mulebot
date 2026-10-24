@@ -10,6 +10,9 @@ export DATAMULE_API_KEY="your-datamule-key"
 export OPENROUTER_API_KEY="your-openrouter-key"
 # Or OPENAI_API_KEY, GEMINI_API_KEY, ANTHROPIC_API_KEY for your chosen provider.
 ```
+Keys can also be passed as `api_key` / `model_api_key` (Python) or
+`apiKey` / `modelApiKey` (JavaScript), overriding environment variables.
+
 Install
 ```python
 pip install mulebot

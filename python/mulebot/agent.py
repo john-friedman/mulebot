@@ -64,11 +64,11 @@ def reasoning_text(response):
 
 
 class Agent:
-    def __init__(self, provider, *, model=None, allowed_tables=None):
+    def __init__(self, provider, *, api_key=None, model=None, model_api_key=None, allowed_tables=None):
         self.provider = provider
         self.model = resolve_model(provider, model)
-        self.model_api_key = credentials(provider)
-        self._tool_state = Tools(allowed_tables=allowed_tables)
+        api_key, self.model_api_key = credentials(provider, api_key, model_api_key)
+        self._tool_state = Tools(api_key, allowed_tables=allowed_tables)
         self.instructions = INSTRUCTIONS
         self.documentation = documentation_context()
         self.messages = []

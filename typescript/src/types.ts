@@ -44,12 +44,14 @@ export interface Event {
 }
 export type Provider = 'openrouter' | 'openai' | 'gemini' | 'anthropic';
 export interface ToolOptions {
+  apiKey?: string;
   allowedTables?: string[] | null;
   fetch?: typeof globalThis.fetch;
   signal?: AbortSignal;
 }
 export interface Options extends ToolOptions {
   provider: Provider;
+  modelApiKey?: string;
   model?: string;
   reasoningEffort?: string;
 }

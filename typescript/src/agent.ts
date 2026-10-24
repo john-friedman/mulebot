@@ -23,11 +23,11 @@ export class Agent {
   private readonly modelApiKey: string;
 
   constructor(private options: Options) {
-    if (options && ('apiKey' in options || 'modelApiKey' in options)) throw new Error('Credentials must be set through environment variables.');
     this.provider = options?.provider;
     this.model = resolveModel(this.provider, options?.model);
-    this.modelApiKey = credentials(this.provider);
-    this.toolState = new Tools(options);
+    const keys = credentials(this.provider, options);
+    this.modelApiKey = keys.modelApiKey;
+    this.toolState = new Tools({...options, apiKey: keys.apiKey});
     this.messages = [];
     this.updateSystemMessage();
   }

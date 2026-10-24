@@ -94,18 +94,20 @@ class Handler(BaseHTTPRequestHandler):
             pass
 
 
-def create_server(provider, *, port=8000, model=None, allowed_tables=None):
+def create_server(provider, *, port=8000, model=None, allowed_tables=None, api_key=None, model_api_key=None):
     default_model = resolve_model(provider, model)
-    credentials(provider)
+    api_key, model_api_key = credentials(provider, api_key, model_api_key)
     server = ThreadingHTTPServer(("127.0.0.1", port), Handler)
     server.provider = provider
     server.default_model = default_model
-    server.agent_factory = lambda **settings: Agent(provider, allowed_tables=allowed_tables, **settings)
+    server.agent_factory = lambda **settings: Agent(provider, api_key=api_key, model_api_key=model_api_key,
+                                                    allowed_tables=allowed_tables, **settings)
     return server
 
 
-def serve(provider, *, port=8000, model=None, allowed_tables=None):
-    with create_server(provider, port=port, model=model, allowed_tables=allowed_tables) as server:
+def serve(provider, *, port=8000, model=None, allowed_tables=None, api_key=None, model_api_key=None):
+    with create_server(provider, port=port, model=model, allowed_tables=allowed_tables,
+                       api_key=api_key, model_api_key=model_api_key) as server:
         print(f"Mulebot: http://localhost:{server.server_port}", file=sys.stderr, flush=True)
         try:
             server.serve_forever()

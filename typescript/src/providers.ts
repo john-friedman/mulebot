@@ -1,6 +1,6 @@
 import {environment} from './types.js';
 import {DEFAULT_MODEL} from './config.js';
-import type {Message, Provider} from './types.js';
+import type {Message, Options, Provider} from './types.js';
 
 export const DEFAULT_MODELS: Record<Provider, string> = {
   openrouter: DEFAULT_MODEL,
@@ -28,11 +28,14 @@ export function resolveModel(provider: Provider, model?: string): string {
   return value.trim();
 }
 
-export function credentials(provider: Provider): string {
+export function credentials(provider: Provider, options: Pick<Options, 'apiKey' | 'modelApiKey'> = {}) {
   validateProvider(provider);
-  const missing = ['DATAMULE_API_KEY', KEY_VARIABLES[provider]].filter(name => !environment(name)?.trim());
-  if (missing.length) throw new Error(`Set ${missing.join(' and ')}.`);
-  return environment(KEY_VARIABLES[provider])!;
+  const apiKey = options.apiKey || environment('DATAMULE_API_KEY') || '';
+  const modelApiKey = options.modelApiKey || environment(KEY_VARIABLES[provider]) || '';
+  const missing = [['DATAMULE_API_KEY', apiKey], [KEY_VARIABLES[provider], modelApiKey]]
+    .filter(([, value]) => typeof value !== 'string' || !value.trim()).map(([name]) => name);
+  if (missing.length) throw new Error(`Pass the corresponding keys or set ${missing.join(' and ')}.`);
+  return {apiKey, modelApiKey};
 }
 
 // Keep provider-specific fields out of requests to other providers.

@@ -32,12 +32,15 @@ def resolve_model(provider, model=None):
     return model.strip()
 
 
-def credentials(provider):
+def credentials(provider, api_key=None, model_api_key=None):
     validate_provider(provider)
-    missing = [name for name in ("DATAMULE_API_KEY", KEY_VARIABLES[provider]) if not os.environ.get(name, "").strip()]
+    api_key = api_key or os.environ.get("DATAMULE_API_KEY")
+    model_api_key = model_api_key or os.environ.get(KEY_VARIABLES[provider])
+    missing = [name for name, value in (("DATAMULE_API_KEY", api_key), (KEY_VARIABLES[provider], model_api_key))
+               if not isinstance(value, str) or not value.strip()]
     if missing:
-        raise ValueError("Set " + " and ".join(missing) + ".")
-    return os.environ[KEY_VARIABLES[provider]]
+        raise ValueError("Pass the corresponding keys or set " + " and ".join(missing) + ".")
+    return api_key, model_api_key
 
 
 def _native_content(message, provider):

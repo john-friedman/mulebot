@@ -116,10 +116,10 @@ TOOL_DEFINITIONS = [
 
 
 class Tools:
-    def __init__(self, *, allowed_tables=None):
-        self.api_key = os.environ.get("DATAMULE_API_KEY", "")
-        if not self.api_key.strip():
-            raise ValueError("Set DATAMULE_API_KEY.")
+    def __init__(self, api_key=None, allowed_tables=None):
+        self.api_key = api_key or os.environ.get("DATAMULE_API_KEY", "")
+        if not isinstance(self.api_key, str) or not self.api_key.strip():
+            raise ValueError("Pass api_key or set DATAMULE_API_KEY.")
         self.allowed_tables = None if allowed_tables is None else {t.lower() for t in allowed_tables}
         self.catalog = None
         self.results = {}

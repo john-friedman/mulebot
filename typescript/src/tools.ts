@@ -20,9 +20,8 @@ export class Tools {
   private allowedTables: Set<string> | null;
   readonly apiKey: string;
   constructor(private options: ToolOptions = {}) {
-    if (!isObject(options) || 'apiKey' in options || 'modelApiKey' in options) throw new Error('Credentials must be set through environment variables.');
-    this.apiKey = environment('DATAMULE_API_KEY') || '';
-    if (!this.apiKey.trim()) throw new Error('Set DATAMULE_API_KEY.');
+    this.apiKey = options.apiKey || environment('DATAMULE_API_KEY') || '';
+    if (typeof this.apiKey !== 'string' || !this.apiKey.trim()) throw new Error('Pass apiKey or set DATAMULE_API_KEY.');
     this.allowedTables = options.allowedTables == null ? null : new Set(options.allowedTables.map(name => name.toLowerCase()));
     const handlers: Record<string, Tool['execute']> = {
       query: args => this.query(args),
